@@ -168,13 +168,13 @@ def step_user_has_id(context):
     assert response_data["id"] is not None, "User ID should not be None"
     print(f"User has ID: {response_data['id']}")
 
-@then('the user\'s name should be updated to "{expected_name}"')
+@then('the user\'s name should be updated to "{expected_name}" via API')
 def step_user_name_updated_via_api(context, expected_name):
     """Verify user name was updated via API"""
     response_data = context.response.json()
     assert response_data["name"] == expected_name, \
         f"Expected name {expected_name}, got {response_data['name']}"
-    print(f"User name updated to {expected_name}")
+    print(f"User name updated to {expected_name} via API")
 
 @then('the user should be deleted from the system')
 def step_user_deleted_via_api(context):

@@ -29,7 +29,7 @@ Feature: API Integration
     Given a user with ID "123" exists
     When I send a PUT request to "/api/users/123" with updated name "Updated User"
     Then the response status should be 200
-    And the user's name should be updated to "Updated User"
+    And the user's name should be updated to "Updated User" via API
 
   Scenario: Delete user via API
     Given a user with ID "123" exists

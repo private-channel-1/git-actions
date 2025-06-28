@@ -18,15 +18,18 @@ on:
         - api_integration
         - smoke
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
     
     strategy:
       matrix:
-        python-version: [3.8, 3.9, 3.10, 3.11]
-        # Uncomment to run tests on multiple OS
-        # os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: [3.9]
     
     steps:
     - name: Checkout code
@@ -50,38 +53,56 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
+    - name: Install Allure
+      run: |
+        curl -o allure-2.24.1.tgz -Ls https://repo.maven.apache.org/maven2/io/qameta/allure/allure-commandline/2.24.1/allure-commandline-2.24.1.tgz
+        tar -zxvf allure-2.24.1.tgz -C /opt/
+        ln -s /opt/allure-2.24.1/bin/allure /usr/local/bin/allure
+        
     - name: Create test reports directory
-      run: mkdir -p test-reports
-      
-    - name: Run smoke tests (if specified)
-      if: github.event.inputs.test_suite == 'smoke'
+      run: mkdir -p test-reports allure-results
+
+    - name: Set TEST_SUITE environment variable
+      run: echo "TEST_SUITE=${{ github.event.inputs.test_suite || 'all' }}" >> $GITHUB_ENV
+
+    - name: Run selected tests
       run: |
-        behave --tags=@smoke --format=pretty --outfile=test-reports/smoke-tests.txt
-        behave --tags=@smoke --format=junit --outfile=test-reports/smoke-tests.xml
+        echo "Running test suite: $TEST_SUITE"
+
+        if [[ "$TEST_SUITE" == "smoke" ]]; then
+          behave --tags=@smoke --format=pretty --outfile=test-reports/smoke-tests.txt
+          behave --tags=@smoke --format=junit --outfile=test-reports/smoke-tests.xml
+          behave --tags=@smoke --format=allure_behave.formatter:AllureFormatter --outfile=allure-results/smoke-results
+
+        elif [[ "$TEST_SUITE" == "user_management" ]]; then
+          behave features/user_management.feature --format=pretty --outfile=test-reports/user-management-tests.txt
+          behave features/user_management.feature --format=junit --outfile=test-reports/user-management-tests.xml
+          behave features/user_management.feature --format=allure_behave.formatter:AllureFormatter --outfile=allure-results/user-management-results
+
+        elif [[ "$TEST_SUITE" == "api_integration" ]]; then
+          behave features/api_integration.feature --format=pretty --outfile=test-reports/api-integration-tests.txt
+          behave features/api_integration.feature --format=junit --outfile=test-reports/api-integration-tests.xml
+          behave features/api_integration.feature --format=allure_behave.formatter:AllureFormatter --outfile=allure-results/api-integration-results
+
+        else
+          behave --format=pretty --outfile=test-reports/all-tests.txt
+          behave --format=junit --outfile=test-reports/all-tests.xml
+          behave --format=allure_behave.formatter:AllureFormatter --outfile=allure-results/all-results
+        fi
       continue-on-error: true
-      
-    - name: Run user management tests (if specified)
-      if: github.event.inputs.test_suite == 'user_management'
+
+    - name: Generate Allure HTML Report
+      if: always()
       run: |
-        behave features/user_management.feature --format=pretty --outfile=test-reports/user-management-tests.txt
-        behave features/user_management.feature --format=junit --outfile=test-reports/user-management-tests.xml
+        allure generate allure-results --clean -o allure-report
       continue-on-error: true
-      
-    - name: Run API integration tests (if specified)
-      if: github.event.inputs.test_suite == 'api_integration'
+
+    - name: List test report files
+      if: always()
       run: |
-        behave features/api_integration.feature --format=pretty --outfile=test-reports/api-integration-tests.txt
-        behave features/api_integration.feature --format=junit --outfile=test-reports/api-integration-tests.xml
-      continue-on-error: true
-      
-    - name: Run all integration tests
-      if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == ''
-      run: |
-        behave --format=pretty --outfile=test-reports/all-tests.txt
-        behave --format=junit --outfile=test-reports/all-tests.xml
-        behave --format=html --outfile=test-reports/behave-report.html
-      continue-on-error: true
-      
+        echo "Test report files generated:"
+        ls -la test-reports/ || echo "No test-reports directory found"
+        
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: always()
@@ -89,14 +110,10 @@ jobs:
         name: test-results-${{ matrix.python-version }}
         path: |
           test-reports/
+          allure-results/
+          allure-report/
           *.log
         retention-days: 30
-        
-    - name: Publish test results
-      uses: EnricoMi/publish-unit-test-result-action@v2
-      if: always()
-      with:
-        files: "test-reports/*.xml"
         
     - name: Comment PR with test results
       if: github.event_name == 'pull_request' && always()
@@ -105,21 +122,25 @@ jobs:
         script: |
           const fs = require('fs');
           const path = require('path');
-          
+
           let testSummary = '## Integration Test Results\n\n';
           
           try {
-            const testFiles = fs.readdirSync('test-reports');
-            for (const file of testFiles) {
-              if (file.endsWith('.txt')) {
-                const content = fs.readFileSync(path.join('test-reports', file), 'utf8');
-                testSummary += `### ${file}\n\`\`\`\n${content}\n\`\`\`\n\n`;
+            if (fs.existsSync('test-reports')) {
+              const testFiles = fs.readdirSync('test-reports');
+              for (const file of testFiles) {
+                if (file.endsWith('.txt')) {
+                  const content = fs.readFileSync(path.join('test-reports', file), 'utf8');
+                  testSummary += `### ${file}\n\`\`\`\n${content.substring(0, 1000)}...\n\`\`\`\n\n`;
+                }
               }
+            } else {
+              testSummary += 'No test reports directory found.\n';
             }
           } catch (error) {
-            testSummary += 'No test reports found.\n';
+            testSummary += `Error reading test reports: ${error.message}\n`;
           }
-          
+
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
@@ -167,4 +188,4 @@ jobs:
       with:
         name: test-summary
         path: test-summary.md
-        retention-days: 30 
+        retention-days: 30
