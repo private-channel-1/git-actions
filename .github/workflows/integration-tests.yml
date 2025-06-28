@@ -24,7 +24,7 @@ jobs:
     
     strategy:
       matrix:
-        python-version: [3.8, 3.9, 3.10, 3.11]
+        python-version: [3.9]
     
     steps:
     - name: Checkout code
@@ -50,36 +50,33 @@ jobs:
         
     - name: Create test reports directory
       run: mkdir -p test-reports
-      
-    - name: Run smoke tests (if specified)
-      if: github.event.inputs.test_suite == 'smoke'
+
+    - name: Set TEST_SUITE environment variable
+      run: echo "TEST_SUITE=${{ github.event.inputs.test_suite || 'all' }}" >> $GITHUB_ENV
+
+    - name: Run selected tests
       run: |
-        behave --tags=@smoke --format=pretty --outfile=test-reports/smoke-tests.txt
-        behave --tags=@smoke --format=junit --outfile=test-reports/smoke-tests.xml
+        echo "Running test suite: $TEST_SUITE"
+
+        if [[ "$TEST_SUITE" == "smoke" ]]; then
+          behave --tags=@smoke --format=pretty --outfile=test-reports/smoke-tests.txt
+          behave --tags=@smoke --format=junit --outfile=test-reports/smoke-tests.xml
+
+        elif [[ "$TEST_SUITE" == "user_management" ]]; then
+          behave features/user_management.feature --format=pretty --outfile=test-reports/user-management-tests.txt
+          behave features/user_management.feature --format=junit --outfile=test-reports/user-management-tests.xml
+
+        elif [[ "$TEST_SUITE" == "api_integration" ]]; then
+          behave features/api_integration.feature --format=pretty --outfile=test-reports/api-integration-tests.txt
+          behave features/api_integration.feature --format=junit --outfile=test-reports/api-integration-tests.xml
+
+        else
+          behave --format=pretty --outfile=test-reports/all-tests.txt
+          behave --format=junit --outfile=test-reports/all-tests.xml
+          behave --format=html --outfile=test-reports/behave-report.html
+        fi
       continue-on-error: true
-      
-    - name: Run user management tests (if specified)
-      if: github.event.inputs.test_suite == 'user_management'
-      run: |
-        behave features/user_management.feature --format=pretty --outfile=test-reports/user-management-tests.txt
-        behave features/user_management.feature --format=junit --outfile=test-reports/user-management-tests.xml
-      continue-on-error: true
-      
-    - name: Run API integration tests (if specified)
-      if: github.event.inputs.test_suite == 'api_integration'
-      run: |
-        behave features/api_integration.feature --format=pretty --outfile=test-reports/api-integration-tests.txt
-        behave features/api_integration.feature --format=junit --outfile=test-reports/api-integration-tests.xml
-      continue-on-error: true
-      
-    - name: Run all integration tests
-      if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == ''
-      run: |
-        behave --format=pretty --outfile=test-reports/all-tests.txt
-        behave --format=junit --outfile=test-reports/all-tests.xml
-        behave --format=html --outfile=test-reports/behave-report.html
-      continue-on-error: true
-      
+
     - name: List test report files
       if: always()
       run: |
@@ -103,7 +100,7 @@ jobs:
         script: |
           const fs = require('fs');
           const path = require('path');
-          
+
           let testSummary = '## Integration Test Results\n\n';
           
           try {
@@ -112,7 +109,7 @@ jobs:
               for (const file of testFiles) {
                 if (file.endsWith('.txt')) {
                   const content = fs.readFileSync(path.join('test-reports', file), 'utf8');
-                  testSummary += `### ${file}\n\`\`\`\n${content}\n\`\`\`\n\n`;
+                  testSummary += `### ${file}\n\`\`\`\n${content.substring(0, 1000)}...\n\`\`\`\n\n`;
                 }
               }
             } else {
@@ -121,7 +118,7 @@ jobs:
           } catch (error) {
             testSummary += `Error reading test reports: ${error.message}\n`;
           }
-          
+
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
@@ -169,10 +166,4 @@ jobs:
       with:
         name: test-summary
         path: test-summary.md
-        retention-days: 30 
-
-  check-act-installation:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check if Act is installed
-      run: act --version
+        retention-days: 30
